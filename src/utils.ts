@@ -23,6 +23,12 @@ export const formatTimeTR = (iso?: string) => {
   }).format(new Date(iso));
 };
 
+export const formatDateTimeTR = (d: Date) =>
+  new Intl.DateTimeFormat('tr-TR', {
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  }).format(d);
+
 export const dateToTime = (d: Date) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 
 export const timeToDate = (time?: string) => {

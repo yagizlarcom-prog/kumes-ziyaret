@@ -38,6 +38,23 @@
     "extra": {
       "eas": {
         "projectId": "a90432d9-5afe-498b-9ed2-07ddf1d737e9"
+      },
+      "firebase": {
+        "apiKey": "",
+        "authDomain": "",
+        "projectId": "",
+        "storageBucket": "",
+        "messagingSenderId": "",
+        "appId": ""
+      },
+      "revenueCat": {
+        "appleApiKey": "",
+        "googleApiKey": "",
+        "entitlementId": "pro"
+      },
+      "featureFlags": {
+        "authEnabled": false,
+        "subscriptionsEnabled": false
       }
     }
   }

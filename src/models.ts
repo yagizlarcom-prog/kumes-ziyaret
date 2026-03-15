@@ -1,5 +1,6 @@
 ﻿export type Visit = {
   id: string;
+  period_id?: string | null;
   coop_name: string;
   producer_name: string;
   field_officer: string;
@@ -38,3 +39,29 @@ export type KesimHistory = {
   animal_count: number | null;
   created_at: string;
 };
+
+export type MedicationEntry = {
+  id: string;
+  coop_name: string;
+  med_code: string;
+  med_name: string;
+  unit: string;
+  quantity: number | null;
+  created_at: string;
+};
+
+export type CoopPeriod = {
+  id: string;
+  coop_name: string;
+  started_at: string;
+  created_at: string;
+};
+
+export type BreederAgeEntry = {
+  id: string;
+  coop_name: string;
+  breeder_age: string;
+  created_at: string;
+};
+
+
