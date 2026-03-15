@@ -17,6 +17,7 @@ import { formatDateTR, formatTimeTR, isoDateFromDateTime, toISODate } from '../u
 type Props = {
   onNew: () => void;
   onEdit: (visit: Visit) => void;
+  onOpenKesim: () => void;
 };
 
 type CoopSection = {
@@ -24,7 +25,7 @@ type CoopSection = {
   data: Visit[];
 };
 
-export default function ListScreen({ onNew, onEdit }: Props) {
+export default function ListScreen({ onNew, onEdit, onOpenKesim }: Props) {
   const [visits, setVisits] = useState<Visit[]>([]);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -117,6 +118,9 @@ export default function ListScreen({ onNew, onEdit }: Props) {
         <Pressable style={[styles.button, styles.secondary]} onPress={exportExcel} disabled={exporting}>
           <Text style={styles.buttonText}>{exporting ? 'Excel Hazırlanıyor...' : "Excel'e Aktar"}</Text>
         </Pressable>
+        <Pressable style={[styles.button, styles.accent]} onPress={onOpenKesim}>
+          <Text style={styles.buttonText}>Kesim/Nakil</Text>
+        </Pressable>
         <Pressable style={[styles.button, styles.ghost]} onPress={load}>
           <Text style={styles.ghostText}>{loading ? 'Yükleniyor...' : 'Yenile'}</Text>
         </Pressable>
@@ -191,6 +195,7 @@ const styles = StyleSheet.create({
   button: { padding: 12, borderRadius: 10, alignItems: 'center' },
   primary: { backgroundColor: '#2E7D32' },
   secondary: { backgroundColor: '#0277BD' },
+  accent: { backgroundColor: '#EF6C00' },
   ghost: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd' },
   buttonText: { color: '#fff', fontWeight: '600' },
   ghostText: { color: '#333' },

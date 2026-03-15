@@ -4,10 +4,11 @@ import { initDb } from './src/db';
 import { Visit } from './src/models';
 import ListScreen from './src/screens/ListScreen';
 import FormScreen from './src/screens/FormScreen';
+import KesimScreen from './src/screens/KesimScreen';
 
 export default function App() {
   const [ready, setReady] = useState(false);
-  const [screen, setScreen] = useState<'list' | 'form'>('list');
+  const [screen, setScreen] = useState<'list' | 'form' | 'kesim'>('list');
   const [editingVisit, setEditingVisit] = useState<Visit | null>(null);
 
   useEffect(() => {
@@ -22,18 +23,27 @@ export default function App() {
     );
   }
 
-  return screen === 'list' ? (
-    <ListScreen
-      onNew={() => {
-        setEditingVisit(null);
-        setScreen('form');
-      }}
-      onEdit={visit => {
-        setEditingVisit(visit);
-        setScreen('form');
-      }}
-    />
-  ) : (
+  if (screen === 'list') {
+    return (
+      <ListScreen
+        onNew={() => {
+          setEditingVisit(null);
+          setScreen('form');
+        }}
+        onEdit={visit => {
+          setEditingVisit(visit);
+          setScreen('form');
+        }}
+        onOpenKesim={() => setScreen('kesim')}
+      />
+    );
+  }
+
+  if (screen === 'kesim') {
+    return <KesimScreen onBack={() => setScreen('list')} />;
+  }
+
+  return (
     <FormScreen
       initialVisit={editingVisit || undefined}
       onCancel={() => {

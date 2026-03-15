@@ -1,5 +1,5 @@
 ﻿import * as SQLite from 'expo-sqlite';
-import { Visit } from './models';
+import { KesimHistory, Visit } from './models';
 
 const CREATE_SQL = `
 CREATE TABLE IF NOT EXISTS visits (
@@ -37,6 +37,15 @@ CREATE TABLE IF NOT EXISTS visits (
 );
 `;
 
+const CREATE_KESIM_HISTORY_SQL = `
+CREATE TABLE IF NOT EXISTS kesim_history (
+  id TEXT PRIMARY KEY NOT NULL,
+  owner TEXT NOT NULL,
+  animal_count INTEGER,
+  created_at TEXT
+);
+`;
+
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 const getDb = async () => {
@@ -49,6 +58,7 @@ const getDb = async () => {
 export const initDb = async () => {
   const db = await getDb();
   await db.execAsync(CREATE_SQL);
+  await db.execAsync(CREATE_KESIM_HISTORY_SQL);
 
   const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(visits)');
   const hasCoopName = columns.some(c => c.name === 'coop_name');
@@ -160,5 +170,27 @@ export const updateVisit = async (v: Visit) => {
       v.created_at,
       v.id
     ]
+  );
+};
+
+export const insertKesimHistory = async (owner: string, animalCount: number | null) => {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO kesim_history (id, owner, animal_count, created_at)
+     VALUES (?,?,?,?)`,
+    [
+      `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      owner,
+      animalCount,
+      new Date().toISOString()
+    ]
+  );
+};
+
+export const getKesimHistory = async (limit = 3) => {
+  const db = await getDb();
+  return db.getAllAsync<KesimHistory>(
+    'SELECT * FROM kesim_history ORDER BY created_at DESC LIMIT ?',
+    [limit]
   );
 };

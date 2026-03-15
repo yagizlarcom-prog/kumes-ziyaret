@@ -31,3 +31,10 @@
   notes: string;
   created_at: string;
 };
+
+export type KesimHistory = {
+  id: string;
+  owner: string;
+  animal_count: number | null;
+  created_at: string;
+};
