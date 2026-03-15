@@ -56,6 +56,9 @@
         "authEnabled": false,
         "subscriptionsEnabled": false
       }
-    }
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
   }
 }
