@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { getVisits } from '../db';
 import { Visit } from '../models';
-import { createExcelFile, saveExcelFileToDirectory, shareExcelFile } from '../exportExcel';
+import { createExcelFile, openExcelFile, saveExcelFileToDirectory, shareExcelFile } from '../exportExcel';
 import { formatDateTR, formatTimeTR, isoDateFromDateTime, toISODate } from '../utils';
 
 type Props = {
@@ -29,6 +29,7 @@ export default function ListScreen({ onNew, onEdit, onOpenKesim }: Props) {
   const [visits, setVisits] = useState<Visit[]>([]);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [viewing, setViewing] = useState(false);
   const [tab, setTab] = useState<'daily' | 'coops'>('daily');
 
   const load = async () => {
@@ -100,6 +101,24 @@ export default function ListScreen({ onNew, onEdit, onOpenKesim }: Props) {
     }
   };
 
+  const viewExcel = async () => {
+    if (visits.length === 0) {
+      Alert.alert('Uyarı', 'Görüntülenecek kayıt yok.');
+      return;
+    }
+
+    setViewing(true);
+    try {
+      const { fileUri } = await createExcelFile(visits);
+      await openExcelFile(fileUri);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Excel görüntülenemedi.';
+      Alert.alert('Hata', message);
+    } finally {
+      setViewing(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -115,9 +134,22 @@ export default function ListScreen({ onNew, onEdit, onOpenKesim }: Props) {
         <Pressable style={[styles.button, styles.primary]} onPress={onNew}>
           <Text style={styles.buttonText}>Yeni Ziyaret</Text>
         </Pressable>
-        <Pressable style={[styles.button, styles.secondary]} onPress={exportExcel} disabled={exporting}>
-          <Text style={styles.buttonText}>{exporting ? 'Excel Hazırlanıyor...' : "Excel'e Aktar"}</Text>
-        </Pressable>
+        <View style={styles.row}>
+          <Pressable
+            style={[styles.button, styles.secondary, styles.half]}
+            onPress={exportExcel}
+            disabled={exporting}
+          >
+            <Text style={styles.buttonText}>{exporting ? 'Excel Hazırlanıyor...' : "Excel'e Aktar"}</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.button, styles.outline, styles.half]}
+            onPress={viewExcel}
+            disabled={viewing}
+          >
+            <Text style={styles.outlineText}>{viewing ? 'Excel Açılıyor...' : "Excel'i Görüntüle"}</Text>
+          </Pressable>
+        </View>
         <Pressable style={[styles.button, styles.accent]} onPress={onOpenKesim}>
           <Text style={styles.buttonText}>Kesim/Nakil</Text>
         </Pressable>
@@ -192,12 +224,16 @@ const styles = StyleSheet.create({
   title: { fontSize: 20, fontWeight: '700', color: '#1B1B1B' },
   subtitle: { marginTop: 4, color: '#666' },
   actions: { paddingHorizontal: 16, gap: 10, marginTop: 12 },
+  row: { flexDirection: 'row', gap: 10 },
   button: { padding: 12, borderRadius: 10, alignItems: 'center' },
+  half: { flex: 1 },
   primary: { backgroundColor: '#2E7D32' },
   secondary: { backgroundColor: '#0277BD' },
   accent: { backgroundColor: '#EF6C00' },
+  outline: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#0277BD' },
   ghost: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd' },
   buttonText: { color: '#fff', fontWeight: '600' },
+  outlineText: { color: '#0277BD', fontWeight: '600' },
   ghostText: { color: '#333' },
   tabs: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 12 },
   tabButton: {

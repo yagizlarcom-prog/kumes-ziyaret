@@ -1,6 +1,8 @@
 ﻿import * as XLSX from 'xlsx';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import * as IntentLauncher from 'expo-intent-launcher';
+import { Platform } from 'react-native';
 import { Asset } from 'expo-asset';
 import { Visit } from './models';
 import { isoDateFromDateTime, toISODate } from './utils';
@@ -194,6 +196,19 @@ export const shareExcelFile = async (fileUri: string) => {
   });
 };
 
+export const openExcelFile = async (fileUri: string) => {
+  if (Platform.OS === 'android') {
+    const contentUri = await FileSystem.getContentUriAsync(fileUri);
+    await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+      data: contentUri,
+      flags: 1,
+      type: MIME_TYPE
+    });
+    return;
+  }
+  await shareExcelFile(fileUri);
+};
+
 export const saveExcelFileToDirectory = async (fileUri: string, fileName: string) => {
   const perms = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
   if (!perms.granted) {
@@ -216,3 +231,5 @@ export const saveExcelFileToDirectory = async (fileUri: string, fileName: string
 
   return safFileUri;
 };
+
+

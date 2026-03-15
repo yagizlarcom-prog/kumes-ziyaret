@@ -137,6 +137,7 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
   const [recentVisits, setRecentVisits] = useState<Visit[]>([]);
   const [prompting, setPrompting] = useState(false);
   const lastPromptKeyRef = useRef<string>('');
+  const lastFallbackKeyRef = useRef<string>('');
 
   const [picker, setPicker] = useState<{
     show: boolean;
@@ -203,6 +204,18 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
     return null;
   };
 
+  const pickFromRecent = (getter: (v: Visit) => string | number | null | undefined) => {
+    const recent = recentVisits.slice(0, 3);
+    for (const visit of recent) {
+      const value = getter(visit);
+      if (value == null) continue;
+      if (typeof value === 'number' && Number.isNaN(value)) continue;
+      if (typeof value === 'string' && !value.trim()) continue;
+      return value;
+    }
+    return null;
+  };
+
   useEffect(() => {
     if (isEditing) return;
     const coopName = form.coopName.trim();
@@ -224,6 +237,7 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
           style: 'cancel',
           onPress: () => {
             lastPromptKeyRef.current = promptKey;
+            lastFallbackKeyRef.current = normalizeCoop(coopName);
             setPrompting(false);
           }
         },
@@ -257,6 +271,61 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
       { cancelable: true }
     );
   }, [form.coopName, recentVisits, isEditing, prompting]);
+
+  useEffect(() => {
+    if (isEditing) return;
+    const coopName = form.coopName.trim();
+    if (!coopName || autoFillLoading || prompting) return;
+    if (recentVisits.length === 0) return;
+
+    const normalized = normalizeCoop(coopName);
+    if (!normalized || normalized.length < 2) return;
+    if (lastFallbackKeyRef.current === normalized) return;
+
+    const fallbackFieldOfficer = pickFromRecent(v => v.field_officer) as string | null;
+    const fallbackCoopAreaM2 = numToString(pickFromRecent(v => v.coop_area_m2) as number | null);
+    const fallbackEntryCount = numToString(pickFromRecent(v => v.entry_count) as number | null);
+    const fallbackChickOrigin = pickFromRecent(v => v.chick_origin) as string | null;
+    const fallbackBreeder = pickFromRecent(v => v.breeder_and_age) as string | null;
+    const fallbackFirstWeekDeath = numToString(pickFromRecent(v => v.first_week_death_count) as number | null);
+
+    setForm(prev => {
+      if (normalizeCoop(prev.coopName) !== normalized) return prev;
+      let changed = false;
+      const next = { ...prev };
+
+      if (!next.fieldOfficer && fallbackFieldOfficer) {
+        next.fieldOfficer = fallbackFieldOfficer;
+        changed = true;
+      }
+      if (!next.coopAreaM2 && fallbackCoopAreaM2) {
+        next.coopAreaM2 = fallbackCoopAreaM2;
+        changed = true;
+      }
+      if (!next.entryCount && fallbackEntryCount) {
+        next.entryCount = fallbackEntryCount;
+        changed = true;
+      }
+      if (!next.chickOrigin && fallbackChickOrigin) {
+        next.chickOrigin = fallbackChickOrigin;
+        changed = true;
+      }
+      if (!next.breederAndAge && fallbackBreeder) {
+        next.breederAndAge = fallbackBreeder;
+        changed = true;
+      }
+      if (!next.firstWeekDeathCount && fallbackFirstWeekDeath) {
+        next.firstWeekDeathCount = fallbackFirstWeekDeath;
+        changed = true;
+      }
+
+      if (changed) {
+        lastFallbackKeyRef.current = normalized;
+        return next;
+      }
+      return prev;
+    });
+  }, [form.coopName, recentVisits, autoFillLoading, prompting, isEditing]);
 
   const setField = (key: keyof VisitForm, value: string) =>
     setForm(prev => ({ ...prev, [key]: value }));
