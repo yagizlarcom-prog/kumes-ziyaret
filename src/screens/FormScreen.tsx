@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -134,6 +134,9 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
 
   const [suggestions, setSuggestions] = useState<Suggestions>(emptySuggestions);
   const [autoFillLoading, setAutoFillLoading] = useState(false);
+  const [recentVisits, setRecentVisits] = useState<Visit[]>([]);
+  const [prompting, setPrompting] = useState(false);
+  const lastPromptKeyRef = useRef<string>('');
 
   const [picker, setPicker] = useState<{
     show: boolean;
@@ -148,6 +151,7 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
       try {
         const recent = await getRecentVisits(50);
         if (!active) return;
+        setRecentVisits(recent);
         setSuggestions({
           coopName: uniqueRecent(recent, v => v.coop_name),
           producerName: uniqueRecent(recent, v => v.producer_name),
@@ -169,39 +173,90 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
     };
   }, []);
 
+  const normalizeCoop = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/ğ/g, 'g')
+      .replace(/ü/g, 'u')
+      .replace(/ş/g, 's')
+      .replace(/ı/g, 'i')
+      .replace(/ö/g, 'o')
+      .replace(/ç/g, 'c')
+      .replace(/[^a-z0-9]/g, '');
+
+  const findSimilarCoopName = (input: string) => {
+    const normalizedInput = normalizeCoop(input);
+    if (!normalizedInput || normalizedInput.length < 2) return null;
+    for (const visit of recentVisits) {
+      const candidate = visit.coop_name?.trim();
+      if (!candidate) continue;
+      const normalizedCandidate = normalizeCoop(candidate);
+      if (!normalizedCandidate) continue;
+      if (
+        normalizedCandidate === normalizedInput ||
+        normalizedCandidate.includes(normalizedInput) ||
+        normalizedInput.includes(normalizedCandidate)
+      ) {
+        return candidate;
+      }
+    }
+    return null;
+  };
+
   useEffect(() => {
     if (isEditing) return;
     const coopName = form.coopName.trim();
-    if (!coopName) return;
+    if (!coopName || prompting) return;
 
-    let active = true;
-    const handle = setTimeout(async () => {
-      setAutoFillLoading(true);
-      try {
-        const latest = await getLatestVisitByCoopName(coopName);
-        if (!active || !latest) return;
-        setForm(prev => {
-          if (prev.coopName.trim().toLowerCase() !== coopName.toLowerCase()) return prev;
-          return {
-            ...prev,
-            fieldOfficer: prev.fieldOfficer || latest.field_officer || '',
-            coopAreaM2: prev.coopAreaM2 || numToString(latest.coop_area_m2),
-            entryCount: prev.entryCount || numToString(latest.entry_count),
-            chickOrigin: prev.chickOrigin || latest.chick_origin || '',
-            breederAndAge: prev.breederAndAge || latest.breeder_and_age || '',
-            firstWeekDeathCount: prev.firstWeekDeathCount || numToString(latest.first_week_death_count)
-          };
-        });
-      } finally {
-        if (active) setAutoFillLoading(false);
-      }
-    }, 350);
+    const similar = findSimilarCoopName(coopName);
+    if (!similar) return;
 
-    return () => {
-      active = false;
-      clearTimeout(handle);
-    };
-  }, [form.coopName, isEditing]);
+    const promptKey = `${normalizeCoop(coopName)}|${normalizeCoop(similar)}`;
+    if (lastPromptKeyRef.current === promptKey) return;
+    setPrompting(true);
+
+    Alert.alert(
+      'Önceki kayıt bulundu',
+      `"${similar}" için daha önce kayıt var. Otomatik doldurulsun mu?`,
+      [
+        {
+          text: 'Hayır',
+          style: 'cancel',
+          onPress: () => {
+            lastPromptKeyRef.current = promptKey;
+            setPrompting(false);
+          }
+        },
+        {
+          text: 'Doldur',
+          onPress: async () => {
+            lastPromptKeyRef.current = promptKey;
+            setPrompting(false);
+            setAutoFillLoading(true);
+            try {
+              const latest = await getLatestVisitByCoopName(similar);
+              if (!latest) return;
+              setForm(prev => {
+                if (normalizeCoop(prev.coopName) !== normalizeCoop(coopName)) return prev;
+                return {
+                  ...prev,
+                  fieldOfficer: prev.fieldOfficer || latest.field_officer || '',
+                  coopAreaM2: prev.coopAreaM2 || numToString(latest.coop_area_m2),
+                  entryCount: prev.entryCount || numToString(latest.entry_count),
+                  chickOrigin: prev.chickOrigin || latest.chick_origin || '',
+                  breederAndAge: prev.breederAndAge || latest.breeder_and_age || '',
+                  firstWeekDeathCount: prev.firstWeekDeathCount || numToString(latest.first_week_death_count)
+                };
+              });
+            } finally {
+              setAutoFillLoading(false);
+            }
+          }
+        }
+      ],
+      { cancelable: true }
+    );
+  }, [form.coopName, recentVisits, isEditing, prompting]);
 
   const setField = (key: keyof VisitForm, value: string) =>
     setForm(prev => ({ ...prev, [key]: value }));
