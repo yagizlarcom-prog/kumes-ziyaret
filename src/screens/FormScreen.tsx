@@ -11,7 +11,7 @@ import {
   View
 } from 'react-native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { getRecentVisits, insertVisit, updateVisit } from '../db';
+import { getLatestVisitByCoopName, getRecentVisits, insertVisit, updateVisit } from '../db';
 import { Visit } from '../models';
 import {
   calcStayMinutes,
@@ -133,6 +133,7 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
   }));
 
   const [suggestions, setSuggestions] = useState<Suggestions>(emptySuggestions);
+  const [autoFillLoading, setAutoFillLoading] = useState(false);
 
   const [picker, setPicker] = useState<{
     show: boolean;
@@ -167,6 +168,40 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (isEditing) return;
+    const coopName = form.coopName.trim();
+    if (!coopName) return;
+
+    let active = true;
+    const handle = setTimeout(async () => {
+      setAutoFillLoading(true);
+      try {
+        const latest = await getLatestVisitByCoopName(coopName);
+        if (!active || !latest) return;
+        setForm(prev => {
+          if (prev.coopName.trim().toLowerCase() !== coopName.toLowerCase()) return prev;
+          return {
+            ...prev,
+            fieldOfficer: prev.fieldOfficer || latest.field_officer || '',
+            coopAreaM2: prev.coopAreaM2 || numToString(latest.coop_area_m2),
+            entryCount: prev.entryCount || numToString(latest.entry_count),
+            chickOrigin: prev.chickOrigin || latest.chick_origin || '',
+            breederAndAge: prev.breederAndAge || latest.breeder_and_age || '',
+            firstWeekDeathCount: prev.firstWeekDeathCount || numToString(latest.first_week_death_count)
+          };
+        });
+      } finally {
+        if (active) setAutoFillLoading(false);
+      }
+    }, 350);
+
+    return () => {
+      active = false;
+      clearTimeout(handle);
+    };
+  }, [form.coopName, isEditing]);
 
   const setField = (key: keyof VisitForm, value: string) =>
     setForm(prev => ({ ...prev, [key]: value }));
@@ -240,6 +275,9 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
       return;
     }
 
+    const finalDeparture = form.departureTime || dateToTime(new Date());
+    const computedStay = calcStayMinutes(form.arrivalTime, finalDeparture);
+
     const visit: Visit = {
       id: initialVisit?.id ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`,
       coop_name: form.coopName.trim(),
@@ -247,8 +285,8 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
       field_officer: form.fieldOfficer.trim(),
       visit_date: form.visitDate,
       arrival_time: form.arrivalTime,
-      departure_time: form.departureTime,
-      stay_minutes: stayMinutes,
+      departure_time: finalDeparture,
+      stay_minutes: computedStay,
       coop_area_m2: coopAreaNum,
       entry_date: form.entryDate,
       entry_count: entryCountNum,
@@ -304,6 +342,9 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
             onChangeText={t => setField('coopName', t)}
             suggestions={suggestions.coopName}
           />
+          {autoFillLoading ? (
+            <Text style={styles.autoFillText}>Önceki kayıtlar getiriliyor...</Text>
+          ) : null}
           <Field
             label="ÜRETİCİ İSMİ"
             value={form.producerName}
@@ -565,5 +606,6 @@ const styles = StyleSheet.create({
     borderColor: '#BBDEFB',
     maxWidth: 180
   },
-  suggestionText: { fontSize: 12, color: '#0D47A1' }
+  suggestionText: { fontSize: 12, color: '#0D47A1' },
+  autoFillText: { fontSize: 12, color: '#888', marginTop: -4, marginBottom: 8 }
 });

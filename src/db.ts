@@ -102,6 +102,17 @@ export const getRecentVisits = async (limit = 50) => {
   );
 };
 
+export const getLatestVisitByCoopName = async (coopName: string) => {
+  const db = await getDb();
+  const trimmed = coopName.trim();
+  if (!trimmed) return null;
+  const rows = await db.getAllAsync<Visit>(
+    'SELECT * FROM visits WHERE coop_name = ? COLLATE NOCASE ORDER BY created_at DESC LIMIT 1',
+    [trimmed]
+  );
+  return rows[0] ?? null;
+};
+
 export const updateVisit = async (v: Visit) => {
   const db = await getDb();
   await db.runAsync(
