@@ -11,7 +11,17 @@ import {
   View
 } from 'react-native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { getLatestVisitByCoopName, getRecentVisits, insertVisit, updateVisit } from '../db';
+import {
+  deleteVisit,
+  ensureCoopPeriodId,
+  getLatestBreederAgeByCoop,
+  getLatestCoopPeriod,
+  getLatestVisitByCoopName,
+  getRecentVisits,
+  insertVisit,
+  startNewCoopPeriod,
+  updateVisit
+} from '../db';
 import { Visit } from '../models';
 import {
   calcStayMinutes,
@@ -135,9 +145,18 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
   const [suggestions, setSuggestions] = useState<Suggestions>(emptySuggestions);
   const [autoFillLoading, setAutoFillLoading] = useState(false);
   const [recentVisits, setRecentVisits] = useState<Visit[]>([]);
+  const [periodId, setPeriodId] = useState<string | null>(initialVisit?.period_id ?? null);
+  const [autoFillBlocked, setAutoFillBlocked] = useState(false);
+  const [manualPeriodCoop, setManualPeriodCoop] = useState<string | null>(null);
+  const [autoChickAge, setAutoChickAge] = useState<string | null>(null);
+  const [autoTotalLiveKg, setAutoTotalLiveKg] = useState<string | null>(null);
+  const [autoGerStd, setAutoGerStd] = useState<string | null>(null);
+  const [autoCoopAreaM2, setAutoCoopAreaM2] = useState<string | null>(null);
+  const [autoBreederAge, setAutoBreederAge] = useState<string | null>(null);
   const [prompting, setPrompting] = useState(false);
   const lastPromptKeyRef = useRef<string>('');
   const lastFallbackKeyRef = useRef<string>('');
+  const lastBreederPromptRef = useRef<string>('');
 
   const [picker, setPicker] = useState<{
     show: boolean;
@@ -185,6 +204,19 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
       .replace(/ç/g, 'c')
       .replace(/[^a-z0-9]/g, '');
 
+  const calcChickAgeDays = (entryDate: string) => {
+    const [y, m, d] = entryDate.split('-').map(Number);
+    if (!y || !m || !d) return null;
+    const entry = new Date(y, m - 1, d);
+    if (Number.isNaN(entry.getTime())) return null;
+    const today = new Date();
+    const entryMid = new Date(entry.getFullYear(), entry.getMonth(), entry.getDate());
+    const todayMid = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const diff = Math.floor((todayMid.getTime() - entryMid.getTime()) / 86400000);
+    if (diff < 0) return null;
+    return diff;
+  };
+
   const findSimilarCoopName = (input: string) => {
     const normalizedInput = normalizeCoop(input);
     if (!normalizedInput || normalizedInput.length < 2) return null;
@@ -204,6 +236,102 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
     return null;
   };
 
+  useEffect(() => {
+    if (isEditing) return;
+    const coopName = form.coopName.trim();
+    if (!coopName) {
+      setAutoCoopAreaM2(null);
+      return;
+    }
+    let active = true;
+    const loadLatest = async () => {
+      const period = await getLatestCoopPeriod(coopName);
+      let latest = await getLatestVisitByCoopName(coopName, period?.id ?? null);
+      if (!latest) {
+        latest = await getLatestVisitByCoopName(coopName);
+      }
+      if (!active || !latest) return;
+      const value = numToString(latest.coop_area_m2);
+      if (!value) return;
+      setForm(prev => {
+        if (prev.coopAreaM2 && prev.coopAreaM2 !== autoCoopAreaM2) return prev;
+        if (prev.coopAreaM2 === value) return prev;
+        return { ...prev, coopAreaM2: value };
+      });
+      setAutoCoopAreaM2(value);
+    };
+    loadLatest().catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [form.coopName, isEditing, autoCoopAreaM2]);
+
+  useEffect(() => {
+    if (isEditing) return;
+    const coopName = form.coopName.trim();
+    if (!coopName) return;
+    if (form.breederAndAge && form.breederAndAge !== autoBreederAge) return;
+    const key = normalizeCoop(coopName);
+    if (lastBreederPromptRef.current === key) return;
+
+    let active = true;
+    getLatestBreederAgeByCoop(coopName)
+      .then(entry => {
+        if (!active || !entry?.breeder_age) return;
+        Alert.alert('Damızlık Yaşı', `"${entry.breeder_age}" doldurulsun mu?`, [
+          {
+            text: 'Hayır',
+            style: 'cancel',
+            onPress: () => {
+              lastBreederPromptRef.current = key;
+            }
+          },
+          {
+            text: 'Doldur',
+            onPress: () => {
+              lastBreederPromptRef.current = key;
+              setForm(prev => ({
+                ...prev,
+                breederAndAge: prev.breederAndAge || entry.breeder_age
+              }));
+              setAutoBreederAge(entry.breeder_age);
+            }
+          }
+        ]);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
+  }, [form.coopName, form.breederAndAge, autoBreederAge, isEditing]);
+  useEffect(() => {
+    if (isEditing) return;
+    const coopName = form.coopName.trim();
+    const normalized = normalizeCoop(coopName);
+    if (autoFillBlocked && manualPeriodCoop === normalized) return;
+    if (!coopName) {
+      setPeriodId(null);
+      setAutoFillBlocked(false);
+      setManualPeriodCoop(null);
+      return;
+    }
+    if (manualPeriodCoop && manualPeriodCoop === normalized) return;
+
+    let active = true;
+    getLatestCoopPeriod(coopName)
+      .then(period => {
+        if (!active) return;
+        setPeriodId(period?.id ?? null);
+        setAutoFillBlocked(false);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
+  }, [form.coopName, isEditing, manualPeriodCoop, autoFillBlocked]);
+
   const pickFromRecent = (getter: (v: Visit) => string | number | null | undefined) => {
     const recent = recentVisits.slice(0, 3);
     for (const visit of recent) {
@@ -215,11 +343,41 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
     }
     return null;
   };
+  const handleNewPeriod = () => {
+    const coopName = form.coopName.trim();
+    if (!coopName) {
+      Alert.alert('Eksik Alan', 'Yeni dönem için önce kümes adı girilmeli.');
+      return;
+    }
+
+    Alert.alert('Yeni Dönem Başlat', `${coopName} için yeni dönem başlatılsın mı?`, [
+      { text: 'Vazgeç', style: 'cancel' },
+      {
+        text: 'Başlat',
+        onPress: async () => {
+          try {
+            const period = await startNewCoopPeriod(coopName);
+            const normalized = normalizeCoop(coopName);
+            setPeriodId(period.id);
+            setManualPeriodCoop(normalized);
+            setAutoFillBlocked(true);
+            lastPromptKeyRef.current = normalized;
+            lastFallbackKeyRef.current = normalized;
+            Alert.alert('Tamam', 'Yeni dönem başlatıldı. Eski kayıtlar otomatik dolmaz.');
+          } catch (err) {
+            const message = err instanceof Error ? err.message : 'Yeni dönem başlatılamadı.';
+            Alert.alert('Hata', message);
+          }
+        }
+      }
+    ]);
+  };
 
   useEffect(() => {
     if (isEditing) return;
     const coopName = form.coopName.trim();
     if (!coopName || prompting) return;
+    if (autoFillBlocked && manualPeriodCoop === normalizeCoop(coopName)) return;
 
     const similar = findSimilarCoopName(coopName);
     if (!similar) return;
@@ -248,7 +406,9 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
             setPrompting(false);
             setAutoFillLoading(true);
             try {
-              const latest = await getLatestVisitByCoopName(similar);
+              const period = await getLatestCoopPeriod(similar);
+              const latest = await getLatestVisitByCoopName(similar, period?.id ?? null);
+              if (period?.id) setPeriodId(period.id);
               if (!latest) return;
               setForm(prev => {
                 if (normalizeCoop(prev.coopName) !== normalizeCoop(coopName)) return prev;
@@ -270,7 +430,7 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
       ],
       { cancelable: true }
     );
-  }, [form.coopName, recentVisits, isEditing, prompting]);
+  }, [form.coopName, recentVisits, isEditing, prompting, autoFillBlocked, manualPeriodCoop]);
 
   useEffect(() => {
     if (isEditing) return;
@@ -279,6 +439,7 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
     if (recentVisits.length === 0) return;
 
     const normalized = normalizeCoop(coopName);
+    if (autoFillBlocked && manualPeriodCoop === normalized) return;
     if (!normalized || normalized.length < 2) return;
     if (lastFallbackKeyRef.current === normalized) return;
 
@@ -325,7 +486,7 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
       }
       return prev;
     });
-  }, [form.coopName, recentVisits, autoFillLoading, prompting, isEditing]);
+  }, [form.coopName, recentVisits, autoFillLoading, prompting, isEditing, autoFillBlocked, manualPeriodCoop]);
 
   const setField = (key: keyof VisitForm, value: string) =>
     setForm(prev => ({ ...prev, [key]: value }));
@@ -375,6 +536,45 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
     return totalLiveKgNum / feedUsedNum;
   }, [feedUsedNum, totalLiveKgNum]);
 
+  useEffect(() => {
+    if (!form.entryDate) return;
+    const days = calcChickAgeDays(form.entryDate);
+    if (days == null) return;
+    const nextValue = String(days);
+    setForm(prev => {
+      if (prev.chickAge && prev.chickAge !== autoChickAge) return prev;
+      if (prev.chickAge === nextValue) return prev;
+      return { ...prev, chickAge: nextValue };
+    });
+    setAutoChickAge(nextValue);
+  }, [form.entryDate, autoChickAge]);
+
+  useEffect(() => {
+    if (ocaNum == null || entryCountNum == null) return;
+    const liveCount = entryCountNum - (visitDeathCountNum ?? 0);
+    if (liveCount <= 0) return;
+    const total = ocaNum * liveCount;
+    const nextValue = total.toFixed(2);
+    setForm(prev => {
+      if (prev.totalLiveKg && prev.totalLiveKg !== autoTotalLiveKg) return prev;
+      if (prev.totalLiveKg === nextValue) return prev;
+      return { ...prev, totalLiveKg: nextValue };
+    });
+    setAutoTotalLiveKg(nextValue);
+  }, [ocaNum, entryCountNum, visitDeathCountNum, autoTotalLiveKg]);
+
+  useEffect(() => {
+    if (ocaNum == null || stdOcaNum == null || stdOcaNum === 0) return;
+    const ger = ((ocaNum - stdOcaNum) / stdOcaNum) * 100;
+    const nextValue = ger.toFixed(2);
+    setForm(prev => {
+      if (prev.gerStd && prev.gerStd !== autoGerStd) return prev;
+      if (prev.gerStd === nextValue) return prev;
+      return { ...prev, gerStd: nextValue };
+    });
+    setAutoGerStd(nextValue);
+  }, [ocaNum, stdOcaNum, autoGerStd]);
+
   const openPicker = (target: PickerTarget, mode: 'date' | 'time') =>
     setPicker({ show: true, mode, target });
 
@@ -401,9 +601,14 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
 
     const finalDeparture = form.departureTime || dateToTime(new Date());
     const computedStay = calcStayMinutes(form.arrivalTime, finalDeparture);
+    const resolvedPeriodId = isEditing
+      ? (initialVisit?.period_id ?? periodId ?? (await ensureCoopPeriodId(form.coopName.trim())))
+      : (periodId ?? (await ensureCoopPeriodId(form.coopName.trim())));
 
     const visit: Visit = {
       id: initialVisit?.id ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      period_id: resolvedPeriodId,
+
       coop_name: form.coopName.trim(),
       producer_name: form.producerName.trim(),
       field_officer: form.fieldOfficer.trim(),
@@ -444,6 +649,21 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
     onSaved();
   };
 
+  const remove = async () => {
+    if (!isEditing || !initialVisit) return;
+    Alert.alert('Kaydı Sil', 'Bu ziyareti silmek istediğine emin misin?', [
+      { text: 'Vazgeç', style: 'cancel' },
+      {
+        text: 'Sil',
+        style: 'destructive',
+        onPress: async () => {
+          await deleteVisit(initialVisit.id);
+          onSaved();
+        }
+      }
+    ]);
+  };
+
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={styles.header}>
@@ -466,6 +686,14 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
             onChangeText={t => setField('coopName', t)}
             suggestions={suggestions.coopName}
           />
+          <View style={styles.periodRow}>
+            <Pressable style={styles.periodButton} onPress={handleNewPeriod}>
+              <Text style={styles.periodButtonText}>Yeni Dönem Başlat</Text>
+            </Pressable>
+            {manualPeriodCoop === normalizeCoop(form.coopName) ? (
+              <Text style={styles.periodHint}>Yeni dönem aktif</Text>
+            ) : null}
+          </View>
           {autoFillLoading ? (
             <Text style={styles.autoFillText}>Önceki kayıtlar getiriliyor...</Text>
           ) : null}
@@ -579,6 +807,11 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
             <Text style={styles.buttonText}>{isEditing ? 'Güncelle' : 'Kaydet'}</Text>
           </Pressable>
         </View>
+        {isEditing ? (
+          <Pressable style={styles.deleteButton} onPress={remove}>
+            <Text style={styles.deleteText}>Kaydı Sil</Text>
+          </Pressable>
+        ) : null}
       </ScrollView>
 
       {picker.show && (
@@ -718,6 +951,16 @@ const styles = StyleSheet.create({
   primary: { backgroundColor: '#2E7D32' },
   secondary: { backgroundColor: '#607D8B' },
   buttonText: { color: '#fff', fontWeight: '600' },
+  deleteButton: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    backgroundColor: '#FDECEA',
+    borderWidth: 1,
+    borderColor: '#F5C6C6'
+  },
+  deleteText: { color: '#B71C1C', fontWeight: '700' },
   suggestionWrap: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
   suggestionLabel: { fontSize: 12, color: '#666', marginRight: 8 },
   suggestionChips: { gap: 8, paddingRight: 6 },
@@ -731,5 +974,36 @@ const styles = StyleSheet.create({
     maxWidth: 180
   },
   suggestionText: { fontSize: 12, color: '#0D47A1' },
+  periodRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  periodButton: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#EF6C00', backgroundColor: '#FFF3E0' },
+  periodButtonText: { color: '#E65100', fontWeight: '700', fontSize: 12 },
+  periodHint: { color: '#2E7D32', fontSize: 12, fontWeight: '600' },
   autoFillText: { fontSize: 12, color: '#888', marginTop: -4, marginBottom: 8 }
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

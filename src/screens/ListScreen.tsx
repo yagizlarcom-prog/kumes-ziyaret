@@ -2,22 +2,27 @@
 import {
   Alert,
   FlatList,
+  Modal,
   Platform,
   Pressable,
   SectionList,
+  StatusBar,
   StyleSheet,
   Text,
   View
 } from 'react-native';
-import { getVisits } from '../db';
-import { Visit } from '../models';
+import { deleteVisit, getDailyMedicationEntries, getLatestCoopPeriod, getVisits } from '../db';
+import { MedicationEntry, Visit } from '../models';
 import { createExcelFile, openExcelFile, saveExcelFileToDirectory, shareExcelFile } from '../exportExcel';
 import { formatDateTR, formatTimeTR, isoDateFromDateTime, toISODate } from '../utils';
 
 type Props = {
-  onNew: () => void;
+  onNewForm: () => void;
+  onNewMeds: (coopName?: string) => void;
   onEdit: (visit: Visit) => void;
   onOpenKesim: () => void;
+  onOpenBreeder: () => void;
+  refreshKey: number;
 };
 
 type CoopSection = {
@@ -25,25 +30,45 @@ type CoopSection = {
   data: Visit[];
 };
 
-export default function ListScreen({ onNew, onEdit, onOpenKesim }: Props) {
+export default function ListScreen({ onNewForm, onNewMeds, onEdit, onOpenKesim, onOpenBreeder, refreshKey }: Props) {
   const [visits, setVisits] = useState<Visit[]>([]);
+  const [dailyMeds, setDailyMeds] = useState<MedicationEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [viewing, setViewing] = useState(false);
   const [tab, setTab] = useState<'daily' | 'coops'>('daily');
+  const [selectedCoop, setSelectedCoop] = useState<string>('');
+  const [selectedCoopPeriodId, setSelectedCoopPeriodId] = useState<string | null>(null);
+  const [coopPickerOpen, setCoopPickerOpen] = useState(false);
 
   const load = async () => {
     setLoading(true);
-    const data = await getVisits();
+    const today = toISODate(new Date());
+    const [data, meds] = await Promise.all([
+      getVisits(),
+      getDailyMedicationEntries(today)
+    ]);
     setVisits(data);
+    setDailyMeds(meds);
     setLoading(false);
   };
 
   useEffect(() => {
     load();
-  }, []);
+  }, [refreshKey]);
 
   const todayISO = toISODate(new Date());
+  const ninetyDaysAgo = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 90);
+    return d;
+  }, []);
+  const isWithin90Days = (iso?: string) => {
+    if (!iso) return false;
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return false;
+    return date >= ninetyDaysAgo;
+  };
 
   const dailyVisits = useMemo(
     () => visits.filter(v => isoDateFromDateTime(v.created_at) === todayISO),
@@ -67,15 +92,67 @@ export default function ListScreen({ onNew, onEdit, onOpenKesim }: Props) {
     return Array.from(map.entries()).map(([title, data]) => ({ title, data }));
   }, [visits]);
 
+  const coopNames = useMemo(
+    () => coopSections.map(section => section.title),
+    [coopSections]
+  );
+
+  useEffect(() => {
+    if (tab === 'coops' && !selectedCoop && coopNames.length > 0) {
+      setSelectedCoop(coopNames[0]);
+    }
+  }, [tab, selectedCoop, coopNames]);
+
+  useEffect(() => {
+    let active = true;
+    if (tab !== 'coops' || !selectedCoop) {
+      setSelectedCoopPeriodId(null);
+      return;
+    }
+    getLatestCoopPeriod(selectedCoop)
+      .then(period => {
+        if (!active) return;
+        setSelectedCoopPeriodId(period?.id ?? null);
+      })
+      .catch(() => {
+        if (active) setSelectedCoopPeriodId(null);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [tab, selectedCoop, visits]);
+
+  const filteredCoopVisits = useMemo(() => {
+    if (!selectedCoop) return [] as Visit[];
+    return visits.filter(v => {
+      const coopKey = (v.coop_name || 'Kümes Adı Yok').trim();
+      if (coopKey !== selectedCoop) return false;
+      if (selectedCoopPeriodId && v.period_id !== selectedCoopPeriodId) return false;
+      return isWithin90Days(v.created_at);
+    });
+  }, [visits, selectedCoop, selectedCoopPeriodId, ninetyDaysAgo]);
+
+  const coopSectionData = useMemo(() => {
+    if (!selectedCoop) return [] as CoopSection[];
+    return [{ title: selectedCoop, data: filteredCoopVisits }];
+  }, [selectedCoop, filteredCoopVisits]);
+
+  const getFilteredVisits = () => {
+    if (tab === 'daily') return dailyVisits;
+    return filteredCoopVisits;
+  };
+
   const exportExcel = async () => {
-    if (visits.length === 0) {
-      Alert.alert('Uyarı', 'Dışa aktarılacak kayıt yok.');
+    const data = getFilteredVisits();
+    if (data.length === 0) {
+      Alert.alert('Uyarı', tab === 'daily' ? 'Bugün kayıt yok.' : 'Bu kümes için kayıt yok.');
       return;
     }
 
     setExporting(true);
     try {
-      const { fileUri, fileName } = await createExcelFile(visits);
+      const { fileUri, fileName } = await createExcelFile(data);
 
       try {
         await shareExcelFile(fileUri);
@@ -102,14 +179,15 @@ export default function ListScreen({ onNew, onEdit, onOpenKesim }: Props) {
   };
 
   const viewExcel = async () => {
-    if (visits.length === 0) {
-      Alert.alert('Uyarı', 'Görüntülenecek kayıt yok.');
+    const data = getFilteredVisits();
+    if (data.length === 0) {
+      Alert.alert('Uyarı', tab === 'daily' ? 'Bugün kayıt yok.' : 'Bu kümes için kayıt yok.');
       return;
     }
 
     setViewing(true);
     try {
-      const { fileUri } = await createExcelFile(visits);
+      const { fileUri } = await createExcelFile(data);
       await openExcelFile(fileUri);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Excel görüntülenemedi.';
@@ -117,6 +195,29 @@ export default function ListScreen({ onNew, onEdit, onOpenKesim }: Props) {
     } finally {
       setViewing(false);
     }
+  };
+
+  const confirmDelete = (visit: Visit) => {
+    Alert.alert('Kaydı Sil', 'Bu ziyareti silmek istediğine emin misin?', [
+      { text: 'Vazgeç', style: 'cancel' },
+      {
+        text: 'Sil',
+        style: 'destructive',
+        onPress: async () => {
+          await deleteVisit(visit.id);
+          load();
+        }
+      }
+    ]);
+  };
+
+  const handleVisitPress = (visit: Visit) => {
+    Alert.alert('Ziyaret', 'Ne yapmak istersiniz?', [
+      { text: 'Formu Düzenle', onPress: () => onEdit(visit) },
+      { text: 'İlaç Ekle', onPress: () => onNewMeds(visit.coop_name) },
+      { text: 'Sil', style: 'destructive', onPress: () => confirmDelete(visit) },
+      { text: 'Vazgeç', style: 'cancel' }
+    ]);
   };
 
   return (
@@ -131,7 +232,16 @@ export default function ListScreen({ onNew, onEdit, onOpenKesim }: Props) {
       </View>
 
       <View style={styles.actions}>
-        <Pressable style={[styles.button, styles.primary]} onPress={onNew}>
+        <Pressable
+          style={[styles.button, styles.primary]}
+          onPress={() =>
+            Alert.alert('Yeni Kayıt', 'Ne eklemek istersiniz?', [
+              { text: 'Form', onPress: onNewForm },
+              { text: 'İlaç Listesi', onPress: onNewMeds },
+              { text: 'Vazgeç', style: 'cancel' }
+            ])
+          }
+        >
           <Text style={styles.buttonText}>Yeni Ziyaret</Text>
         </Pressable>
         <View style={styles.row}>
@@ -150,6 +260,9 @@ export default function ListScreen({ onNew, onEdit, onOpenKesim }: Props) {
             <Text style={styles.outlineText}>{viewing ? 'Excel Açılıyor...' : "Excel'i Görüntüle"}</Text>
           </Pressable>
         </View>
+        <Pressable style={[styles.button, styles.info]} onPress={onOpenBreeder}>
+          <Text style={styles.buttonText}>Damızlık Yaşları</Text>
+        </Pressable>
         <Pressable style={[styles.button, styles.accent]} onPress={onOpenKesim}>
           <Text style={styles.buttonText}>Kesim/Nakil</Text>
         </Pressable>
@@ -179,8 +292,32 @@ export default function ListScreen({ onNew, onEdit, onOpenKesim }: Props) {
           keyExtractor={item => item.id}
           contentContainerStyle={styles.list}
           ListEmptyComponent={<Text style={styles.emptyText}>Bugün kayıt yok.</Text>}
+          ListFooterComponent={
+            dailyMeds.length > 0 ? (
+              <View style={styles.medsSection}>
+                <Text style={styles.medsTitle}>Günlük Verilen İlaçlar</Text>
+                {Object.entries(
+                  dailyMeds.reduce<Record<string, MedicationEntry[]>>((acc, med) => {
+                    const key = med.coop_name || 'Kümes Adı Yok';
+                    acc[key] = acc[key] || [];
+                    acc[key].push(med);
+                    return acc;
+                  }, {})
+                ).map(([coop, items]) => (
+                  <View key={coop} style={styles.medsCard}>
+                    <Text style={styles.medsCoop}>{coop}</Text>
+                    {items.map(item => (
+                      <Text key={item.id} style={styles.medsLine}>
+                        {item.med_name} · {item.quantity} {item.unit === 'AD' ? 'ADET' : item.unit}
+                      </Text>
+                    ))}
+                  </View>
+                ))}
+              </View>
+            ) : null
+          }
           renderItem={({ item }) => (
-            <Pressable style={styles.card} onPress={() => onEdit(item)}>
+            <Pressable style={styles.card} onPress={() => handleVisitPress(item)}>
               <Text style={styles.cardTitle}>{item.coop_name || 'Kümes Adı Yok'}</Text>
               <Text style={styles.cardSubtitle}>{item.producer_name}</Text>
               <Text style={styles.cardMeta}>
@@ -191,29 +328,77 @@ export default function ListScreen({ onNew, onEdit, onOpenKesim }: Props) {
           )}
         />
       ) : (
-        <SectionList
-          sections={coopSections}
-          keyExtractor={item => item.id}
-          contentContainerStyle={styles.list}
-          ListEmptyComponent={<Text style={styles.emptyText}>Kümes kaydı yok.</Text>}
-          renderSectionHeader={({ section }) => (
-            <Text style={styles.sectionHeader}>Kümes: {section.title}</Text>
-          )}
-          renderItem={({ item }) => (
-            <Pressable style={styles.card} onPress={() => onEdit(item)}>
-              <Text style={styles.cardTitle}>{item.producer_name}</Text>
-              <Text style={styles.cardSubtitle}>{formatDateTR(item.visit_date)}</Text>
-              <Text style={styles.cardHint}>Düzenlemek için dokun</Text>
+        <View style={{ flex: 1 }}>
+          <View style={styles.coopPicker}>
+            <Text style={styles.coopPickerLabel}>Seçili Kümes:</Text>
+            <Pressable
+              style={styles.coopPickerButton}
+              onPress={() => setCoopPickerOpen(true)}
+            >
+              <Text style={styles.coopPickerText}>
+                {selectedCoop || 'Kümes seç'}
+              </Text>
             </Pressable>
-          )}
-        />
+          </View>
+          <SectionList
+            sections={coopSectionData}
+            keyExtractor={item => item.id}
+            contentContainerStyle={styles.list}
+            ListEmptyComponent={<Text style={styles.emptyText}>Kümes kaydı yok (son 90 gün).</Text>}
+            renderSectionHeader={({ section }) => (
+              <Text style={styles.sectionHeader}>Kümes: {section.title}</Text>
+            )}
+            renderItem={({ item }) => (
+              <Pressable style={styles.card} onPress={() => handleVisitPress(item)}>
+                <Text style={styles.cardTitle}>{item.producer_name}</Text>
+                <Text style={styles.cardSubtitle}>{formatDateTR(item.visit_date)}</Text>
+                <Text style={styles.cardHint}>Düzenlemek için dokun</Text>
+              </Pressable>
+            )}
+          />
+          <Modal visible={coopPickerOpen} transparent animationType="slide">
+            <View style={styles.modalBackdrop}>
+              <View style={styles.modalCard}>
+                <Text style={styles.modalTitle}>Kümes Seç</Text>
+                <SectionList
+                  sections={[{ title: 'Kümeler', data: coopNames }]}
+                  keyExtractor={item => item}
+                  renderItem={({ item }) => (
+                    <Pressable
+                      style={[
+                        styles.modalItem,
+                        item === selectedCoop && styles.modalItemActive
+                      ]}
+                      onPress={() => {
+                        setSelectedCoop(item);
+                        setCoopPickerOpen(false);
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.modalItemText,
+                          item === selectedCoop && styles.modalItemTextActive
+                        ]}
+                      >
+                        {item}
+                      </Text>
+                    </Pressable>
+                  )}
+                />
+                <Pressable style={[styles.button, styles.ghost]} onPress={() => setCoopPickerOpen(false)}>
+                  <Text style={styles.ghostText}>Kapat</Text>
+                </Pressable>
+              </View>
+            </View>
+          </Modal>
+        </View>
       )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F7F7F7' },
+  container: { flex: 1, backgroundColor: '#F7F7F7', paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0 },
   header: {
     padding: 16,
     paddingBottom: 8,
@@ -229,6 +414,7 @@ const styles = StyleSheet.create({
   half: { flex: 1 },
   primary: { backgroundColor: '#2E7D32' },
   secondary: { backgroundColor: '#0277BD' },
+  info: { backgroundColor: '#455A64' },
   accent: { backgroundColor: '#EF6C00' },
   outline: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#0277BD' },
   ghost: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd' },
@@ -255,5 +441,52 @@ const styles = StyleSheet.create({
   cardMeta: { color: '#666', marginTop: 6 },
   cardHint: { color: '#999', marginTop: 6, fontSize: 12 },
   emptyText: { color: '#777', textAlign: 'center', marginTop: 24 },
-  sectionHeader: { fontSize: 14, fontWeight: '700', color: '#2E7D32', marginBottom: 8 }
+  sectionHeader: { fontSize: 14, fontWeight: '700', color: '#2E7D32', marginBottom: 8 },
+  coopPicker: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  coopPickerLabel: { color: '#555', fontWeight: '600' },
+  coopPickerButton: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    backgroundColor: '#fff'
+  },
+  coopPickerText: { color: '#1B1B1B', fontWeight: '600' },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'flex-end'
+  },
+  modalCard: {
+    backgroundColor: '#fff',
+    padding: 16,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    maxHeight: '70%'
+  },
+  modalTitle: { fontSize: 16, fontWeight: '700', marginBottom: 12 },
+  modalItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#eee',
+    marginBottom: 8
+  },
+  modalItemActive: { borderColor: '#2E7D32', backgroundColor: '#E8F5E9' },
+  modalItemText: { color: '#333', fontWeight: '600' },
+  modalItemTextActive: { color: '#2E7D32' },
+  medsSection: { marginTop: 16, gap: 10 },
+  medsTitle: { fontSize: 14, fontWeight: '700', color: '#1B1B1B' },
+  medsCard: { backgroundColor: '#fff', padding: 12, borderRadius: 10, borderWidth: 1, borderColor: '#eee' },
+  medsCoop: { fontWeight: '700', marginBottom: 6, color: '#2E7D32' },
+  medsLine: { color: '#444', marginBottom: 4 }
 });

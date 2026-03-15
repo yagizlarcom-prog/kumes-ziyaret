@@ -1,0 +1,5 @@
+node_modules
+dist
+.expo
+tmp-test*.xlsx
+*.log
