@@ -284,104 +284,127 @@ export default function FormScreen({ onCancel, onSaved, initialVisit }: Props) {
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <Text style={styles.sectionTitle}>{isEditing ? 'Ziyaret Düzenle' : 'Temel Bilgiler'}</Text>
-        <Field
-          label="KÜMES ADI"
-          value={form.coopName}
-          onChangeText={t => setField('coopName', t)}
-          suggestions={suggestions.coopName}
-        />
-        <Field
-          label="ÜRETİCİ İSMİ"
-          value={form.producerName}
-          onChangeText={t => setField('producerName', t)}
-          suggestions={suggestions.producerName}
-        />
-        <Field
-          label="SAHA SORUMLUSU"
-          value={form.fieldOfficer}
-          onChangeText={t => setField('fieldOfficer', t)}
-          suggestions={suggestions.fieldOfficer}
-        />
+      <View style={styles.header}>
+        <Pressable style={styles.backButton} onPress={onCancel}>
+          <Text style={styles.backText}>Geri</Text>
+        </Pressable>
+        <Text style={styles.headerTitle}>{isEditing ? 'Ziyaret Düzenle' : 'Yeni Ziyaret'}</Text>
+        <View style={styles.headerSpacer} />
+      </View>
+
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.sectionTitle}>Temel Bilgiler</Text>
+        <View style={styles.sectionCard}>
+          <Field
+            label="KÜMES ADI"
+            value={form.coopName}
+            onChangeText={t => setField('coopName', t)}
+            suggestions={suggestions.coopName}
+          />
+          <Field
+            label="ÜRETİCİ İSMİ"
+            value={form.producerName}
+            onChangeText={t => setField('producerName', t)}
+            suggestions={suggestions.producerName}
+          />
+          <Field
+            label="SAHA SORUMLUSU"
+            value={form.fieldOfficer}
+            onChangeText={t => setField('fieldOfficer', t)}
+            suggestions={suggestions.fieldOfficer}
+          />
+        </View>
 
         <Text style={styles.sectionTitle}>Tarih ve Saat</Text>
-        <PickerField
-          label="ZİY.TARİHİ"
-          value={form.visitDate ? formatDateTR(form.visitDate) : ''}
-          onPress={() => openPicker('visitDate', 'date')}
-        />
-        <PickerField
-          label="gidiş saati"
-          value={form.arrivalTime}
-          onPress={() => openPicker('arrivalTime', 'time')}
-        />
-        <PickerField
-          label="çıkış saati"
-          value={form.departureTime}
-          onPress={() => openPicker('departureTime', 'time')}
-        />
-        <ReadOnlyField label="kalış süresi" value={formatMinutes(stayMinutes)} />
+        <View style={styles.sectionCard}>
+          <PickerField
+            label="ZİY.TARİHİ"
+            value={form.visitDate ? formatDateTR(form.visitDate) : ''}
+            onPress={() => openPicker('visitDate', 'date')}
+          />
+          <PickerField
+            label="gidiş saati"
+            value={form.arrivalTime}
+            onPress={() => openPicker('arrivalTime', 'time')}
+          />
+          <PickerField
+            label="çıkış saati"
+            value={form.departureTime}
+            onPress={() => openPicker('departureTime', 'time')}
+          />
+          <ReadOnlyField label="kalış süresi" value={formatMinutes(stayMinutes)} />
+        </View>
 
         <Text style={styles.sectionTitle}>Kümes ve Giriş</Text>
-        <NumberField label="KÜM.M2" value={form.coopAreaM2} onChangeText={t => setField('coopAreaM2', t)} />
-        <PickerField
-          label="GİRİŞ TARİHİ"
-          value={form.entryDate ? formatDateTR(form.entryDate) : ''}
-          onPress={() => openPicker('entryDate', 'date')}
-        />
-        <NumberField label="GİRİŞ ADEDİ" value={form.entryCount} onChangeText={t => setField('entryCount', t)} />
-        <Field
-          label="CİVCİV ORJİNİ"
-          value={form.chickOrigin}
-          onChangeText={t => setField('chickOrigin', t)}
-          suggestions={suggestions.chickOrigin}
-        />
-        <Field
-          label="DAMIZLIK VE YAŞI"
-          value={form.breederAndAge}
-          onChangeText={t => setField('breederAndAge', t)}
-          suggestions={suggestions.breederAndAge}
-        />
-        <ReadOnlyField label="ADET/M2" value={densityPerM2 == null ? '' : densityPerM2.toFixed(2)} />
+        <View style={styles.sectionCard}>
+          <NumberField label="KÜM.M2" value={form.coopAreaM2} onChangeText={t => setField('coopAreaM2', t)} />
+          <PickerField
+            label="GİRİŞ TARİHİ"
+            value={form.entryDate ? formatDateTR(form.entryDate) : ''}
+            onPress={() => openPicker('entryDate', 'date')}
+          />
+          <NumberField label="GİRİŞ ADEDİ" value={form.entryCount} onChangeText={t => setField('entryCount', t)} />
+          <Field
+            label="CİVCİV ORJİNİ"
+            value={form.chickOrigin}
+            onChangeText={t => setField('chickOrigin', t)}
+            suggestions={suggestions.chickOrigin}
+          />
+          <Field
+            label="DAMIZLIK VE YAŞI"
+            value={form.breederAndAge}
+            onChangeText={t => setField('breederAndAge', t)}
+            suggestions={suggestions.breederAndAge}
+          />
+          <ReadOnlyField label="ADET/M2" value={densityPerM2 == null ? '' : densityPerM2.toFixed(2)} />
+        </View>
 
         <Text style={styles.sectionTitle}>Ölüm Bilgileri</Text>
-        <NumberField label="İLK HAFTA ÖLÜM ADET" value={form.firstWeekDeathCount} onChangeText={t => setField('firstWeekDeathCount', t)} />
-        <ReadOnlyField label="İLK HAFTA ÖLÜM %" value={firstWeekDeathPercent == null ? '' : firstWeekDeathPercent.toFixed(2)} />
-        <NumberField label="ZİY.TARİHİNDE ÖLÜM ADEDİ" value={form.visitDeathCount} onChangeText={t => setField('visitDeathCount', t)} />
-        <ReadOnlyField label="ZİY.TARİHİNDE ÖLÜM %" value={visitDeathPercent == null ? '' : visitDeathPercent.toFixed(2)} />
+        <View style={styles.sectionCard}>
+          <NumberField label="İLK HAFTA ÖLÜM ADET" value={form.firstWeekDeathCount} onChangeText={t => setField('firstWeekDeathCount', t)} />
+          <ReadOnlyField label="İLK HAFTA ÖLÜM %" value={firstWeekDeathPercent == null ? '' : firstWeekDeathPercent.toFixed(2)} />
+          <NumberField label="ZİY.TARİHİNDE ÖLÜM ADEDİ" value={form.visitDeathCount} onChangeText={t => setField('visitDeathCount', t)} />
+          <ReadOnlyField label="ZİY.TARİHİNDE ÖLÜM %" value={visitDeathPercent == null ? '' : visitDeathPercent.toFixed(2)} />
+        </View>
 
         <Text style={styles.sectionTitle}>Performans</Text>
-        <Field label="CİVCİV YAŞI" value={form.chickAge} onChangeText={t => setField('chickAge', t)} />
-        <NumberField label="OCA" value={form.oca} onChangeText={t => setField('oca', t)} />
-        <NumberField label="STD.OCA" value={form.stdOca} onChangeText={t => setField('stdOca', t)} />
-        <NumberField label="GER/STD" value={form.gerStd} onChangeText={t => setField('gerStd', t)} />
-        <ReadOnlyField label="KÜM.KALAN" value={coopRemaining == null ? '' : String(coopRemaining)} />
-        <NumberField label="TOP.CANLI KG" value={form.totalLiveKg} onChangeText={t => setField('totalLiveKg', t)} />
-        <NumberField label="YED.YEM" value={form.feedUsed} onChangeText={t => setField('feedUsed', t)} />
-        <ReadOnlyField label="FCR" value={fcr == null ? '' : fcr.toFixed(3)} />
-        <ReadOnlyField label="RANDIMAN" value={randiman == null ? '' : randiman.toFixed(3)} />
+        <View style={styles.sectionCard}>
+          <Field label="CİVCİV YAŞI" value={form.chickAge} onChangeText={t => setField('chickAge', t)} />
+          <NumberField label="OCA" value={form.oca} onChangeText={t => setField('oca', t)} />
+          <NumberField label="STD.OCA" value={form.stdOca} onChangeText={t => setField('stdOca', t)} />
+          <NumberField label="GER/STD" value={form.gerStd} onChangeText={t => setField('gerStd', t)} />
+          <ReadOnlyField label="KÜM.KALAN" value={coopRemaining == null ? '' : String(coopRemaining)} />
+          <NumberField label="TOP.CANLI KG" value={form.totalLiveKg} onChangeText={t => setField('totalLiveKg', t)} />
+          <NumberField label="YED.YEM" value={form.feedUsed} onChangeText={t => setField('feedUsed', t)} />
+          <ReadOnlyField label="FCR" value={fcr == null ? '' : fcr.toFixed(3)} />
+          <ReadOnlyField label="RANDIMAN" value={randiman == null ? '' : randiman.toFixed(3)} />
+        </View>
 
         <Text style={styles.sectionTitle}>Diğer</Text>
-        <Field
-          label="HAVALANDIRMA KAPASİTESİ"
-          value={form.ventilationCapacity}
-          onChangeText={t => setField('ventilationCapacity', t)}
-          suggestions={suggestions.ventilationCapacity}
-        />
-        <Field
-          label="BİYOGÜVENLİK"
-          value={form.biosecurity}
-          onChangeText={t => setField('biosecurity', t)}
-          suggestions={suggestions.biosecurity}
-        />
-        <Field
-          label="AÇIKLAMALAR"
-          value={form.notes}
-          onChangeText={t => setField('notes', t)}
-          multiline
-          suggestions={suggestions.notes}
-        />
+        <View style={styles.sectionCard}>
+          <Field
+            label="HAVALANDIRMA KAPASİTESİ"
+            value={form.ventilationCapacity}
+            onChangeText={t => setField('ventilationCapacity', t)}
+            suggestions={suggestions.ventilationCapacity}
+          />
+          <Field
+            label="BİYOGÜVENLİK"
+            value={form.biosecurity}
+            onChangeText={t => setField('biosecurity', t)}
+            suggestions={suggestions.biosecurity}
+          />
+          <Field
+            label="AÇIKLAMALAR"
+            value={form.notes}
+            onChangeText={t => setField('notes', t)}
+            multiline
+            suggestions={suggestions.notes}
+          />
+        </View>
 
         <View style={styles.actions}>
           <Pressable style={[styles.button, styles.secondary]} onPress={onCancel}>
@@ -489,8 +512,34 @@ function SuggestionRow(props: { items: string[]; onPick: (value: string) => void
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F7F7F7' },
+  header: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  backButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    backgroundColor: '#fff'
+  },
+  backText: { color: '#333', fontWeight: '600' },
+  headerTitle: { fontSize: 18, fontWeight: '700', color: '#1B1B1B' },
+  headerSpacer: { width: 60 },
   scroll: { padding: 16, paddingBottom: 32 },
-  sectionTitle: { fontSize: 16, fontWeight: '700', marginTop: 12, marginBottom: 8 },
+  sectionTitle: { fontSize: 15, fontWeight: '700', marginTop: 14, marginBottom: 8 },
+  sectionCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#eee'
+  },
   field: { marginBottom: 12 },
   label: { marginBottom: 6, color: '#333' },
   input: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10 },

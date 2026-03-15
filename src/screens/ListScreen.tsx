@@ -102,7 +102,12 @@ export default function ListScreen({ onNew, onEdit }: Props) {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Kümes Ziyaretleri</Text>
+        <View>
+          <Text style={styles.title}>Kümes Ziyaretleri</Text>
+          <Text style={styles.subtitle}>
+            Bugün: {dailyVisits.length} · Toplam: {visits.length}
+          </Text>
+        </View>
       </View>
 
       <View style={styles.actions}>
@@ -173,9 +178,16 @@ export default function ListScreen({ onNew, onEdit }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F7F7F7' },
-  header: { padding: 16, paddingBottom: 8 },
-  title: { fontSize: 20, fontWeight: '700' },
-  actions: { paddingHorizontal: 16, gap: 10 },
+  header: {
+    padding: 16,
+    paddingBottom: 8,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderColor: '#eee'
+  },
+  title: { fontSize: 20, fontWeight: '700', color: '#1B1B1B' },
+  subtitle: { marginTop: 4, color: '#666' },
+  actions: { paddingHorizontal: 16, gap: 10, marginTop: 12 },
   button: { padding: 12, borderRadius: 10, alignItems: 'center' },
   primary: { backgroundColor: '#2E7D32' },
   secondary: { backgroundColor: '#0277BD' },

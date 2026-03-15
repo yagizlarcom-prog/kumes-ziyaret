@@ -1,21 +1,39 @@
-import * as XLSX from 'xlsx';
+ï»¿import * as XLSX from 'xlsx';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { Asset } from 'expo-asset';
 import { Visit } from './models';
-import { formatDateTR, isoDateFromDateTime, toISODate } from './utils';
+import { isoDateFromDateTime, toISODate } from './utils';
 
 const MIME_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const TEMPLATE_MODULE = require('../assets/template.xlsx');
 
-const DAILY_SHEET_CANDIDATES = ['1', 'GÜNLÜK', 'GUNLUK'];
+const DAILY_SHEET_CANDIDATES = ['1', 'GÃœNLÃœK', 'GUNLUK'];
 const COOP_SHEET_CANDIDATES = ['GENEL'];
 
-const OUTPUT_DAILY_SHEET = 'Günlük Ziyaretler';
-const OUTPUT_COOP_SHEET = 'Kümes Kayýtlarý';
+const OUTPUT_DAILY_SHEET = 'GÃ¼nlÃ¼k Ziyaretler';
+const OUTPUT_COOP_SHEET = 'KÃ¼mes KayÄ±tlarÄ±';
 
-const numberOrEmpty = (n: number | null | undefined) =>
-  n == null || Number.isNaN(n) ? '' : n;
+const numberOrNull = (n: number | null | undefined) =>
+  n == null || Number.isNaN(n) ? null : n;
+
+const toExcelDate = (iso?: string) => {
+  if (!iso) return null;
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return null;
+  const utc = Date.UTC(y, m - 1, d);
+  return utc / 86400000 + 25569;
+};
+
+const toExcelTime = (time?: string) => {
+  if (!time) return null;
+  const [h, m] = time.split(':').map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return (h * 60 + m) / (24 * 60);
+};
+
+const minutesToExcelTime = (mins?: number | null) =>
+  mins == null ? null : mins / (24 * 60);
 
 const findSheetName = (wb: any, candidates: string[]) => {
   for (const name of candidates) {
@@ -44,11 +62,17 @@ const findRowByText = (ws: any, text: string) => {
   return null;
 };
 
-const setCellIfEmpty = (ws: any, r: number, c: number, value: string | number) => {
+const setCellValue = (
+  ws: any,
+  r: number,
+  c: number,
+  value: string | number | null | undefined,
+  options?: { keepFormula?: boolean }
+) => {
+  if (value == null || value === '') return;
   const addr = XLSX.utils.encode_cell({ r, c });
   const existing = ws[addr];
-  if (existing?.f) return;
-  if (existing?.v != null && existing.v !== '') return;
+  if (existing?.f && !options?.keepFormula) return;
   ws[addr] = {
     ...(existing || {}),
     v: value,
@@ -57,40 +81,50 @@ const setCellIfEmpty = (ws: any, r: number, c: number, value: string | number) =
 };
 
 const fillSheet = (ws: any, visits: Visit[], options: { producerName: (v: Visit) => string }) => {
-  const headerRow = findRowByText(ws, 'ÜRETÝCÝ ÝSMÝ');
+  const headerRow = findRowByText(ws, 'ÃœRETÄ°CÄ° Ä°SMÄ°');
   if (headerRow == null) return;
 
-  const nextSectionRow = findRowByText(ws, 'HESAP GÖRECEK ÜRETÝCÝLER :');
+  const nextSectionRow = findRowByText(ws, 'HESAP GÃ–RECEK ÃœRETÄ°CÄ°LER :');
   const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:A1');
   const startRow = headerRow + 1;
   const endRow = (nextSectionRow != null ? nextSectionRow - 1 : range.e.r);
 
   const capacity = endRow - startRow + 1;
   if (visits.length > capacity) {
-    throw new Error(`Þablonda ${capacity} satýr var. ${visits.length} kayýt sýðmýyor.`);
+    throw new Error(`Åžablonda ${capacity} satÄ±r var. ${visits.length} kayÄ±t sÄ±ÄŸmÄ±yor.`);
   }
 
   visits.forEach((v, idx) => {
     const r = startRow + idx;
 
-    setCellIfEmpty(ws, r, 1, options.producerName(v));
-    setCellIfEmpty(ws, r, 2, v.field_officer || '');
-    setCellIfEmpty(ws, r, 3, formatDateTR(v.visit_date));
-    setCellIfEmpty(ws, r, 4, v.arrival_time || '');
-    setCellIfEmpty(ws, r, 5, v.departure_time || '');
-    setCellIfEmpty(ws, r, 7, numberOrEmpty(v.coop_area_m2));
-    setCellIfEmpty(ws, r, 8, formatDateTR(v.entry_date));
-    setCellIfEmpty(ws, r, 9, numberOrEmpty(v.entry_count));
-    setCellIfEmpty(ws, r, 10, v.chick_origin || '');
-    setCellIfEmpty(ws, r, 11, v.breeder_and_age || '');
-    setCellIfEmpty(ws, r, 13, numberOrEmpty(v.first_week_death_count));
-    setCellIfEmpty(ws, r, 15, numberOrEmpty(v.visit_death_count));
-    setCellIfEmpty(ws, r, 18, numberOrEmpty(v.oca));
-    setCellIfEmpty(ws, r, 19, numberOrEmpty(v.std_oca));
-    setCellIfEmpty(ws, r, 23, numberOrEmpty(v.feed_used));
-    setCellIfEmpty(ws, r, 26, v.ventilation_capacity || '');
-    setCellIfEmpty(ws, r, 27, v.biosecurity || '');
-    setCellIfEmpty(ws, r, 28, v.notes || '');
+    setCellValue(ws, r, 1, options.producerName(v));
+    setCellValue(ws, r, 2, v.field_officer || '');
+    setCellValue(ws, r, 3, toExcelDate(v.visit_date));
+    setCellValue(ws, r, 4, toExcelTime(v.arrival_time));
+    setCellValue(ws, r, 5, toExcelTime(v.departure_time));
+    setCellValue(ws, r, 6, minutesToExcelTime(v.stay_minutes), { keepFormula: true });
+    setCellValue(ws, r, 7, numberOrNull(v.coop_area_m2));
+    setCellValue(ws, r, 8, toExcelDate(v.entry_date));
+    setCellValue(ws, r, 9, numberOrNull(v.entry_count));
+    setCellValue(ws, r, 10, v.chick_origin || '');
+    setCellValue(ws, r, 11, v.breeder_and_age || '');
+    setCellValue(ws, r, 12, numberOrNull(v.density_per_m2), { keepFormula: true });
+    setCellValue(ws, r, 13, numberOrNull(v.first_week_death_count));
+    setCellValue(ws, r, 14, numberOrNull(v.first_week_death_percent), { keepFormula: true });
+    setCellValue(ws, r, 15, numberOrNull(v.visit_death_count));
+    setCellValue(ws, r, 16, numberOrNull(v.visit_death_percent), { keepFormula: true });
+    setCellValue(ws, r, 17, v.chick_age || '');
+    setCellValue(ws, r, 18, numberOrNull(v.oca));
+    setCellValue(ws, r, 19, numberOrNull(v.std_oca));
+    setCellValue(ws, r, 20, numberOrNull(v.ger_std), { keepFormula: true });
+    setCellValue(ws, r, 21, numberOrNull(v.coop_remaining), { keepFormula: true });
+    setCellValue(ws, r, 22, numberOrNull(v.total_live_kg), { keepFormula: true });
+    setCellValue(ws, r, 23, numberOrNull(v.feed_used));
+    setCellValue(ws, r, 24, numberOrNull(v.fcr), { keepFormula: true });
+    setCellValue(ws, r, 25, numberOrNull(v.randiman), { keepFormula: true });
+    setCellValue(ws, r, 26, v.ventilation_capacity || '');
+    setCellValue(ws, r, 27, v.biosecurity || '');
+    setCellValue(ws, r, 28, v.notes || '');
   });
 };
 
@@ -103,7 +137,7 @@ const loadTemplateBase64 = async () => {
 
 export const createExcelFile = async (visits: Visit[]) => {
   if (!FileSystem.documentDirectory) {
-    throw new Error('Dosya klasörü eriþilemedi.');
+    throw new Error('Dosya klasÃ¶rÃ¼ eriÅŸilemedi.');
   }
 
   const templateBase64 = await loadTemplateBase64();
@@ -151,7 +185,7 @@ export const createExcelFile = async (visits: Visit[]) => {
 export const shareExcelFile = async (fileUri: string) => {
   const canShare = await Sharing.isAvailableAsync();
   if (!canShare) {
-    throw new Error('Bu cihazda paylaþým desteklenmiyor.');
+    throw new Error('Bu cihazda paylaÅŸÄ±m desteklenmiyor.');
   }
 
   await Sharing.shareAsync(fileUri, {
