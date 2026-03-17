@@ -152,7 +152,7 @@ export default function ListScreen({ onNewForm, onNewMeds, onEdit, onOpenKesim, 
 
     setExporting(true);
     try {
-      const { fileUri, fileName } = await createExcelFile(data);
+      const { fileUri, fileName } = await createExcelFile(data, tab);
 
       try {
         await shareExcelFile(fileUri);
@@ -187,7 +187,7 @@ export default function ListScreen({ onNewForm, onNewMeds, onEdit, onOpenKesim, 
 
     setViewing(true);
     try {
-      const { fileUri } = await createExcelFile(data);
+      const { fileUri } = await createExcelFile(data, tab);
       await openExcelFile(fileUri);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Excel görüntülenemedi.';

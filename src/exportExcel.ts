@@ -12,9 +12,7 @@ const TEMPLATE_MODULE = require('../assets/template.xlsx');
 
 const DAILY_SHEET_CANDIDATES = ['1', 'GÜNLÜK', 'GUNLUK'];
 const COOP_SHEET_CANDIDATES = ['GENEL'];
-
-const OUTPUT_DAILY_SHEET = 'Günlük Ziyaretler';
-const OUTPUT_COOP_SHEET = 'Kümes Kayıtları';
+type ExcelExportMode = 'daily' | 'coops';
 
 const numberOrNull = (n: number | null | undefined) =>
   n == null || Number.isNaN(n) ? null : n;
@@ -44,13 +42,11 @@ const findSheetName = (wb: any, candidates: string[]) => {
   return null;
 };
 
-const renameSheet = (wb: any, oldName: string, newName: string) => {
-  if (oldName === newName) return;
-  const idx = wb.SheetNames.indexOf(oldName);
-  if (idx === -1) return;
-  wb.SheetNames[idx] = newName;
-  wb.Sheets[newName] = wb.Sheets[oldName];
-  delete wb.Sheets[oldName];
+const moveSheetToFront = (wb: any, sheetName: string) => {
+  const idx = wb.SheetNames.indexOf(sheetName);
+  if (idx <= 0) return;
+  wb.SheetNames.splice(idx, 1);
+  wb.SheetNames.unshift(sheetName);
 };
 
 const findRowByText = (ws: any, text: string) => {
@@ -137,7 +133,7 @@ const loadTemplateBase64 = async () => {
   return FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
 };
 
-export const createExcelFile = async (visits: Visit[]) => {
+export const createExcelFile = async (visits: Visit[], mode: ExcelExportMode) => {
   if (!FileSystem.documentDirectory) {
     throw new Error('Dosya klasörü erişilemedi.');
   }
@@ -148,30 +144,36 @@ export const createExcelFile = async (visits: Visit[]) => {
   const dailySheetName = findSheetName(wb, DAILY_SHEET_CANDIDATES) || wb.SheetNames[0];
   const coopSheetName = findSheetName(wb, COOP_SHEET_CANDIDATES) || wb.SheetNames[1] || wb.SheetNames[0];
 
-  const todayISO = toISODate(new Date());
-  const dailyVisits = visits.filter(v => isoDateFromDateTime(v.created_at) === todayISO);
+  // NOTE:
+  // SheetJS (xlsx) does NOT reliably preserve "active sheet" (activeTab) when writing.
+  // So Excel always opens the *first* sheet after export. We reorder sheet order so the
+  // user sees the correct sheet depending on the export mode.
+  if (mode === 'daily') {
+    const todayISO = toISODate(new Date());
+    const dailyVisits = visits
+      .filter(v => isoDateFromDateTime(v.created_at) === todayISO)
+      .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
 
-  const coopVisits = [...visits].sort((a, b) => {
-    const coopCompare = (a.coop_name || '').localeCompare(b.coop_name || '');
-    if (coopCompare !== 0) return coopCompare;
-    return (a.visit_date || '').localeCompare(b.visit_date || '');
-  });
+    fillSheet(wb.Sheets[dailySheetName], dailyVisits, {
+      producerName: v => v.producer_name || ''
+    });
 
-  fillSheet(wb.Sheets[dailySheetName], dailyVisits, {
-    producerName: v => v.producer_name || ''
-  });
+    // Open daily sheet first in Excel.
+    moveSheetToFront(wb, dailySheetName);
+  } else {
+    const coopVisits = [...visits].sort((a, b) => {
+      const dateCompare = (a.visit_date || '').localeCompare(b.visit_date || '');
+      if (dateCompare !== 0) return dateCompare;
+      return (a.created_at || '').localeCompare(b.created_at || '');
+    });
 
-  fillSheet(wb.Sheets[coopSheetName], coopVisits, {
-    producerName: v => {
-      const coop = v.coop_name?.trim();
-      const prod = v.producer_name?.trim();
-      if (coop && prod) return `${coop} - ${prod}`;
-      return coop || prod || '';
-    }
-  });
+    fillSheet(wb.Sheets[coopSheetName], coopVisits, {
+      producerName: v => v.producer_name || v.coop_name || ''
+    });
 
-  renameSheet(wb, dailySheetName, OUTPUT_DAILY_SHEET);
-  renameSheet(wb, coopSheetName, OUTPUT_COOP_SHEET);
+    // Open coop sheet first in Excel.
+    moveSheetToFront(wb, coopSheetName);
+  }
 
   const wbout = XLSX.write(wb, { type: 'base64', bookType: 'xlsx', cellStyles: true });
   const fileName = `kumes_ziyaretleri_${Date.now()}.xlsx`;

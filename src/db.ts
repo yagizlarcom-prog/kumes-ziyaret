@@ -155,7 +155,7 @@ export const insertVisit = async (v: Visit) => {
       ventilation_capacity, biosecurity, notes, created_at
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      v.id, v.period_id, v.coop_name, v.producer_name, v.field_officer, v.visit_date, v.arrival_time, v.departure_time,
+      v.id, v.period_id ?? null, v.coop_name, v.producer_name, v.field_officer, v.visit_date, v.arrival_time, v.departure_time,
       v.stay_minutes, v.coop_area_m2, v.entry_date, v.entry_count, v.chick_origin, v.breeder_and_age,
       v.density_per_m2, v.first_week_death_count, v.first_week_death_percent,
       v.visit_death_count, v.visit_death_percent, v.chick_age, v.oca, v.std_oca, v.ger_std,
@@ -261,7 +261,7 @@ export const updateVisit = async (v: Visit) => {
       created_at = ?
     WHERE id = ?`,
     [
-      v.period_id,
+      v.period_id ?? null,
       v.coop_name,
       v.producer_name,
       v.field_officer,

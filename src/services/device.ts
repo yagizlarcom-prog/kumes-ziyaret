@@ -12,7 +12,7 @@ export const getDeviceId = async () => {
   if (Platform.OS === 'ios') {
     id = await Application.getIosIdForVendorAsync();
   } else if (Platform.OS === 'android') {
-    id = Application.androidId ?? null;
+    id = Application.getAndroidId?.() ?? null;
   }
 
   if (!id) {
