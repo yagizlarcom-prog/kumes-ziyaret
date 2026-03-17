@@ -1,18 +1,19 @@
-﻿import * as XLSX from 'xlsx';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { Platform } from 'react-native';
 import { Asset } from 'expo-asset';
+import JSZip from 'jszip';
 import { Visit } from './models';
-import { isoDateFromDateTime, toISODate } from './utils';
 
-const MIME_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const MIME_TYPE =
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const TEMPLATE_MODULE = require('../assets/template.xlsx');
 
 const DAILY_SHEET_CANDIDATES = ['1', 'GÜNLÜK', 'GUNLUK'];
 const COOP_SHEET_CANDIDATES = ['GENEL'];
-type ExcelExportMode = 'daily' | 'coops';
+
+export type ExcelExportMode = 'daily' | 'coops';
 
 const numberOrNull = (n: number | null | undefined) =>
   n == null || Number.isNaN(n) ? null : n;
@@ -32,105 +33,181 @@ const toExcelTime = (time?: string) => {
   return (h * 60 + m) / (24 * 60);
 };
 
-const minutesToExcelTime = (mins?: number | null) =>
-  mins == null ? null : mins / (24 * 60);
+const escapeXmlText = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 
-const findSheetName = (wb: any, candidates: string[]) => {
-  for (const name of candidates) {
-    if (wb.SheetNames.includes(name)) return name;
-  }
-  return null;
+const normalizeCellAttrs = (attrs: string, desiredT: string | null) => {
+  let out = attrs;
+  out = out.replace(/\s+t="[^"]*"/g, '');
+  out = out.replace(/\s+t='[^']*'/g, '');
+  if (desiredT) out += ` t="${desiredT}"`;
+  return out;
 };
 
-const moveSheetToFront = (wb: any, sheetName: string) => {
-  const idx = wb.SheetNames.indexOf(sheetName);
-  if (idx <= 0) return;
-  wb.SheetNames.splice(idx, 1);
-  wb.SheetNames.unshift(sheetName);
-};
-
-const findRowByText = (ws: any, text: string) => {
-  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:A1');
-  const target = text.trim().toUpperCase();
-  for (let r = 0; r <= range.e.r; r++) {
-    const cell = ws[XLSX.utils.encode_cell({ r, c: 1 })];
-    if (!cell || cell.v == null) continue;
-    if (String(cell.v).trim().toUpperCase() === target) return r;
-  }
-  return null;
-};
-
-const setCellValue = (
-  ws: any,
-  r: number,
-  c: number,
-  value: string | number | null | undefined,
-  options?: { keepFormula?: boolean }
+const updateCellXml = (
+  sheetXml: string,
+  addr: string,
+  innerXml: string,
+  desiredT: string | null
 ) => {
-  if (value == null || value === '') return;
-  const addr = XLSX.utils.encode_cell({ r, c });
-  const existing = ws[addr];
-  if (existing?.f && !options?.keepFormula) return;
-  ws[addr] = {
-    ...(existing || {}),
-    v: value,
-    t: typeof value === 'number' ? 'n' : 's'
-  };
+  // Full cell: <c r="B4" s="139"><v>...</v></c>
+  const full = new RegExp(`<c([^>]*)r="${addr}"([^>]*)>([\\s\\S]*?)<\\/c>`);
+  if (full.test(sheetXml)) {
+    return sheetXml.replace(full, (_m, pre, post) => {
+      const attrs = normalizeCellAttrs(`${pre}r="${addr}"${post}`, desiredT);
+      return `<c${attrs}>${innerXml}</c>`;
+    });
+  }
+  // Self-closing cell: <c r="B4" s="139" />
+  const self = new RegExp(`<c([^>]*)r="${addr}"([^>]*)\\/>`);
+  if (self.test(sheetXml)) {
+    return sheetXml.replace(self, (_m, pre, post) => {
+      const attrs = normalizeCellAttrs(`${pre}r="${addr}"${post}`, desiredT);
+      return `<c${attrs}>${innerXml}</c>`;
+    });
+  }
+  throw new Error(
+    `Şablonda ${addr} hücresi bulunamadı. (Template değişmiş olabilir)`
+  );
 };
 
-const fillSheet = (ws: any, visits: Visit[], options: { producerName: (v: Visit) => string }) => {
-  const headerRow = findRowByText(ws, 'ÜRETİCİ İSMİ');
-  if (headerRow == null) return;
+const setCellNumber = (sheetXml: string, addr: string, value: number | null) => {
+  if (value == null || Number.isNaN(value)) return sheetXml;
+  return updateCellXml(sheetXml, addr, `<v>${value}</v>`, null);
+};
 
-  const nextSectionRow = findRowByText(ws, 'HESAP GÖRECEK ÜRETİCİLER :');
-  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:A1');
-  const startRow = headerRow + 1;
-  const endRow = (nextSectionRow != null ? nextSectionRow - 1 : range.e.r);
+const setCellString = (
+  sheetXml: string,
+  addr: string,
+  value: string | null | undefined
+) => {
+  const text = value ? value.trim() : '';
+  if (!text) return sheetXml;
+  const escaped = escapeXmlText(text);
+  return updateCellXml(
+    sheetXml,
+    addr,
+    `<is><t xml:space="preserve">${escaped}</t></is>`,
+    'inlineStr'
+  );
+};
 
-  const capacity = endRow - startRow + 1;
+const findTemplateSheetName = (available: string[], candidates: string[]) => {
+  for (const name of candidates) {
+    if (available.includes(name)) return name;
+  }
+  return null;
+};
+
+const parseWorkbookSheetInfo = (workbookXml: string) => {
+  const sheets: { name: string; rId: string; index: number }[] = [];
+  const re = /<sheet\b[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"[^>]*\/>/g;
+  let m: RegExpExecArray | null;
+  let idx = 0;
+  while ((m = re.exec(workbookXml))) {
+    sheets.push({ name: m[1], rId: m[2], index: idx });
+    idx += 1;
+  }
+  return sheets;
+};
+
+const parseWorkbookRels = (relsXml: string) => {
+  const map = new Map<string, string>();
+  const re = /<Relationship\b[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"[^>]*\/>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(relsXml))) {
+    map.set(m[1], m[2]);
+  }
+  return map;
+};
+
+const setActiveTab = (workbookXml: string, activeTabIndex: number) => {
+  if (!Number.isFinite(activeTabIndex)) return workbookXml;
+  if (workbookXml.includes('activeTab=')) {
+    return workbookXml.replace(/activeTab="\d+"/, `activeTab="${activeTabIndex}"`);
+  }
+  // Fallback: add activeTab to workbookView if missing.
+  return workbookXml.replace(
+    /<workbookView\b([^>]*)\/>/,
+    `<workbookView$1 activeTab="${activeTabIndex}" />`
+  );
+};
+
+const setSheetTabSelected = (sheetXml: string, selected: boolean) => {
+  const has = /<sheetView\b[^>]*tabSelected="1"/.test(sheetXml);
+  if (selected) {
+    if (has) return sheetXml;
+    return sheetXml.replace(/<sheetView\b/, '<sheetView tabSelected="1"');
+  }
+  if (!has) return sheetXml;
+  return sheetXml.replace(/\s+tabSelected="1"/, '');
+};
+
+const fillSheetXml = (sheetXml: string, visits: Visit[], mode: ExcelExportMode) => {
+  // Template table is fixed:
+  // - Header row: 3
+  // - Data rows: 4..17 (14 rows)
+  const startRow = 4;
+  const capacity = 14;
   if (visits.length > capacity) {
     throw new Error(`Şablonda ${capacity} satır var. ${visits.length} kayıt sığmıyor.`);
   }
 
-  visits.forEach((v, idx) => {
-    const r = startRow + idx;
+  const producerText = (v: Visit) => {
+    if (mode !== 'coops') return v.producer_name || '';
+    const coop = v.coop_name?.trim();
+    const prod = v.producer_name?.trim();
+    if (coop && prod) return `${coop} - ${prod}`;
+    return coop || prod || '';
+  };
 
-    setCellValue(ws, r, 1, options.producerName(v));
-    setCellValue(ws, r, 2, v.field_officer || '');
-    setCellValue(ws, r, 3, toExcelDate(v.visit_date));
-    setCellValue(ws, r, 4, toExcelTime(v.arrival_time));
-    setCellValue(ws, r, 5, toExcelTime(v.departure_time));
-    setCellValue(ws, r, 6, minutesToExcelTime(v.stay_minutes), { keepFormula: true });
-    setCellValue(ws, r, 7, numberOrNull(v.coop_area_m2));
-    setCellValue(ws, r, 8, toExcelDate(v.entry_date));
-    setCellValue(ws, r, 9, numberOrNull(v.entry_count));
-    setCellValue(ws, r, 10, v.chick_origin || '');
-    setCellValue(ws, r, 11, v.breeder_and_age || '');
-    setCellValue(ws, r, 12, numberOrNull(v.density_per_m2), { keepFormula: true });
-    setCellValue(ws, r, 13, numberOrNull(v.first_week_death_count));
-    setCellValue(ws, r, 14, numberOrNull(v.first_week_death_percent), { keepFormula: true });
-    setCellValue(ws, r, 15, numberOrNull(v.visit_death_count));
-    setCellValue(ws, r, 16, numberOrNull(v.visit_death_percent), { keepFormula: true });
-    setCellValue(ws, r, 17, v.chick_age || '');
-    setCellValue(ws, r, 18, numberOrNull(v.oca));
-    setCellValue(ws, r, 19, numberOrNull(v.std_oca));
-    setCellValue(ws, r, 20, numberOrNull(v.ger_std), { keepFormula: true });
-    setCellValue(ws, r, 21, numberOrNull(v.coop_remaining), { keepFormula: true });
-    setCellValue(ws, r, 22, numberOrNull(v.total_live_kg), { keepFormula: true });
-    setCellValue(ws, r, 23, numberOrNull(v.feed_used));
-    setCellValue(ws, r, 24, numberOrNull(v.fcr), { keepFormula: true });
-    setCellValue(ws, r, 25, numberOrNull(v.randiman), { keepFormula: true });
-    setCellValue(ws, r, 26, v.ventilation_capacity || '');
-    setCellValue(ws, r, 27, v.biosecurity || '');
-    setCellValue(ws, r, 28, v.notes || '');
+  let xml = sheetXml;
+  visits.forEach((v, i) => {
+    const row = startRow + i;
+
+    // Inputs (computed columns in the template are left as formulas)
+    xml = setCellString(xml, `B${row}`, producerText(v));
+    xml = setCellString(xml, `C${row}`, v.field_officer);
+    xml = setCellNumber(xml, `D${row}`, toExcelDate(v.visit_date));
+    xml = setCellNumber(xml, `E${row}`, toExcelTime(v.arrival_time));
+    xml = setCellNumber(xml, `F${row}`, toExcelTime(v.departure_time));
+    // G = kalış süresi (formula) -> skip
+    xml = setCellNumber(xml, `H${row}`, numberOrNull(v.coop_area_m2));
+    xml = setCellNumber(xml, `I${row}`, toExcelDate(v.entry_date));
+    xml = setCellNumber(xml, `J${row}`, numberOrNull(v.entry_count));
+    xml = setCellString(xml, `K${row}`, v.chick_origin);
+    xml = setCellString(xml, `L${row}`, v.breeder_and_age);
+    // M = adet/m2 (formula) -> skip
+    xml = setCellNumber(xml, `N${row}`, numberOrNull(v.first_week_death_count));
+    // O = ( % ) (formula) -> skip
+    xml = setCellNumber(xml, `P${row}`, numberOrNull(v.visit_death_count));
+    // Q = ölüm % (formula) -> skip
+    xml = setCellString(xml, `R${row}`, v.chick_age);
+    xml = setCellNumber(xml, `S${row}`, numberOrNull(v.oca));
+    xml = setCellNumber(xml, `T${row}`, numberOrNull(v.std_oca));
+    // U = GER/STD (formula) -> skip
+    // V/W/Y/Z etc are computed in template -> skip
+    xml = setCellNumber(xml, `X${row}`, numberOrNull(v.feed_used));
+    xml = setCellString(xml, `AA${row}`, v.ventilation_capacity);
+    xml = setCellString(xml, `AB${row}`, v.biosecurity);
+    xml = setCellString(xml, `AC${row}`, v.notes);
   });
+
+  return xml;
 };
 
 const loadTemplateBase64 = async () => {
   const asset = Asset.fromModule(TEMPLATE_MODULE);
   await asset.downloadAsync();
   const uri = asset.localUri || asset.uri;
-  return FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+  return FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64
+  });
 };
 
 export const createExcelFile = async (visits: Visit[], mode: ExcelExportMode) => {
@@ -139,47 +216,76 @@ export const createExcelFile = async (visits: Visit[], mode: ExcelExportMode) =>
   }
 
   const templateBase64 = await loadTemplateBase64();
-  const wb = XLSX.read(templateBase64, { type: 'base64', cellStyles: true });
 
-  const dailySheetName = findSheetName(wb, DAILY_SHEET_CANDIDATES) || wb.SheetNames[0];
-  const coopSheetName = findSheetName(wb, COOP_SHEET_CANDIDATES) || wb.SheetNames[1] || wb.SheetNames[0];
+  // IMPORTANT:
+  // The "xlsx" library cannot preserve template styling when writing.
+  // We therefore patch the template XLSX (zip) and only update cell values in the sheet XML.
+  // This keeps all formatting / borders / colors / column widths untouched.
+  const zip = await JSZip.loadAsync(templateBase64, { base64: true });
 
-  // NOTE:
-  // SheetJS (xlsx) does NOT reliably preserve "active sheet" (activeTab) when writing.
-  // So Excel always opens the *first* sheet after export. We reorder sheet order so the
-  // user sees the correct sheet depending on the export mode.
-  if (mode === 'daily') {
-    const todayISO = toISODate(new Date());
-    const dailyVisits = visits
-      .filter(v => isoDateFromDateTime(v.created_at) === todayISO)
-      .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
-
-    fillSheet(wb.Sheets[dailySheetName], dailyVisits, {
-      producerName: v => v.producer_name || ''
-    });
-
-    // Open daily sheet first in Excel.
-    moveSheetToFront(wb, dailySheetName);
-  } else {
-    const coopVisits = [...visits].sort((a, b) => {
-      const dateCompare = (a.visit_date || '').localeCompare(b.visit_date || '');
-      if (dateCompare !== 0) return dateCompare;
-      return (a.created_at || '').localeCompare(b.created_at || '');
-    });
-
-    fillSheet(wb.Sheets[coopSheetName], coopVisits, {
-      producerName: v => v.producer_name || v.coop_name || ''
-    });
-
-    // Open coop sheet first in Excel.
-    moveSheetToFront(wb, coopSheetName);
+  const workbookXml = await zip.file('xl/workbook.xml')?.async('string');
+  const relsXml = await zip.file('xl/_rels/workbook.xml.rels')?.async('string');
+  if (!workbookXml || !relsXml) {
+    throw new Error('Şablon bozuk: workbook.xml bulunamadı.');
   }
 
-  const wbout = XLSX.write(wb, { type: 'base64', bookType: 'xlsx', cellStyles: true });
-  const fileName = `kumes_ziyaretleri_${Date.now()}.xlsx`;
+  const sheets = parseWorkbookSheetInfo(workbookXml);
+  const relMap = parseWorkbookRels(relsXml);
+  const availableSheetNames = sheets.map(s => s.name);
+
+  const dailySheetName =
+    findTemplateSheetName(availableSheetNames, DAILY_SHEET_CANDIDATES) ||
+    availableSheetNames[0];
+  const coopSheetName =
+    findTemplateSheetName(availableSheetNames, COOP_SHEET_CANDIDATES) ||
+    availableSheetNames[0];
+
+  const targetSheetName = mode === 'daily' ? dailySheetName : coopSheetName;
+  const otherSheetName = mode === 'daily' ? coopSheetName : dailySheetName;
+
+  const targetSheet = sheets.find(s => s.name === targetSheetName);
+  const otherSheet = sheets.find(s => s.name === otherSheetName);
+  if (!targetSheet) {
+    throw new Error(`Şablonda sheet bulunamadı: ${targetSheetName}`);
+  }
+
+  const targetRel = relMap.get(targetSheet.rId);
+  if (!targetRel) {
+    throw new Error(`Şablonda sheet ilişkisi bulunamadı: ${targetSheetName}`);
+  }
+  const targetPath = `xl/${targetRel}`;
+
+  const targetSheetXml = await zip.file(targetPath)?.async('string');
+  if (!targetSheetXml) {
+    throw new Error(`Şablonda sheet xml bulunamadı: ${targetPath}`);
+  }
+
+  const sortedVisits = [...visits].sort((a, b) =>
+    (a.created_at || '').localeCompare(b.created_at || '')
+  );
+  let newTargetXml = fillSheetXml(targetSheetXml, sortedVisits, mode);
+  newTargetXml = setSheetTabSelected(newTargetXml, true);
+  zip.file(targetPath, newTargetXml);
+
+  if (otherSheet) {
+    const otherRel = relMap.get(otherSheet.rId);
+    if (otherRel) {
+      const otherPath = `xl/${otherRel}`;
+      const otherXml = await zip.file(otherPath)?.async('string');
+      if (otherXml) {
+        zip.file(otherPath, setSheetTabSelected(otherXml, false));
+      }
+    }
+  }
+
+  // Make sure Excel opens the relevant sheet.
+  zip.file('xl/workbook.xml', setActiveTab(workbookXml, targetSheet.index));
+
+  const wbout = await zip.generateAsync({ type: 'base64' });
+  const fileName = `kumes_ziyaretleri_${mode}_${Date.now()}.xlsx`;
   const fileUri = `${FileSystem.documentDirectory}${fileName}`;
 
-  await FileSystem.writeAsStringAsync(fileUri, wbout, {
+  await FileSystem.writeAsStringAsync(fileUri, wbout as any, {
     encoding: FileSystem.EncodingType.Base64
   });
 
@@ -233,5 +339,4 @@ export const saveExcelFileToDirectory = async (fileUri: string, fileName: string
 
   return safFileUri;
 };
-
 
